@@ -21,15 +21,6 @@ public class TFTPServer
 	public static final String READDIR = "/Users/harrisonkatantazi/Desktop/1DV701-assignment3/read/";
 	public static final String WRITEDIR = "/Users/harrisonkatantazi/Desktop/1DV701-assignment3/write/";
 
-	//public static final String READDIR = "/home/username/read/"; //custom address at your PC
-	//public static final String WRITEDIR = "/home/username/write/"; //custom address at your PC
-	// OP codes
-	//public static final int OP_RRQ = 1;
-	//public static final int OP_WRQ = 2;
-	//public static final int OP_DAT = 3;
-	//public static final int OP_ACK = 4;
-	//public static final int OP_ERR = 5;
-
 	/**
 	 * Starts the server application.
 	 *
