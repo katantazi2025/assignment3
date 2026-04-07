@@ -145,9 +145,9 @@ public class TFTPRequestHandler implements Runnable
 	/**
 	 * Handles a write request from the client.
 	 *
-	 * At this stage the method only validates whether the file may be created and
-	 * prints a message. Receiving DATA packets and writing the file can be added
-	 * next.
+	 * This implementation acknowledges the initial WRQ with ACK block 0, receives
+	 * DATA packets from the client, acknowledges each block, and writes the
+	 * uploaded file to disk when the transfer is complete.
 	 *
 	 * @param socket transfer socket connected to the client
 	 * @param filename name of the file the client wants to upload
@@ -170,6 +170,52 @@ public class TFTPRequestHandler implements Runnable
 			return;
 		}
 
+		byte[] ackZero = TFTPPacket.createAckPacket(0);
+		socket.send(new DatagramPacket(ackZero, ackZero.length));
+
+		java.io.ByteArrayOutputStream fileBuffer = new java.io.ByteArrayOutputStream();
+		int expectedBlockNumber = 1;
+		boolean transferComplete = false;
+
+		while (!transferComplete)
+		{
+			byte[] dataBuffer = new byte[TFTPServer.BUFSIZE];
+			DatagramPacket dataPacket = new DatagramPacket(dataBuffer, dataBuffer.length);
+
+			try
+			{
+				socket.receive(dataPacket);
+			}
+			catch (SocketTimeoutException e)
+			{
+				sendError(socket, TFTPError.ILLEGAL_OPERATION,
+						"Timed out while waiting for DATA block " + expectedBlockNumber + ".");
+				return;
+			}
+
+			int opcode = TFTPPacket.getOpcode(dataPacket.getData());
+			int blockNumber = TFTPPacket.getBlockNumber(dataPacket.getData());
+			if (opcode != TFTPPacket.OP_DAT || blockNumber != expectedBlockNumber)
+			{
+				sendError(socket, TFTPError.ILLEGAL_OPERATION,
+						"Unexpected DATA packet received.");
+				return;
+			}
+
+			int dataLength = dataPacket.getLength() - 4;
+			if (dataLength > 0)
+			{
+				fileBuffer.write(dataPacket.getData(), 4, dataLength);
+			}
+
+			byte[] ackPacket = TFTPPacket.createAckPacket(blockNumber);
+			socket.send(new DatagramPacket(ackPacket, ackPacket.length));
+
+			transferComplete = dataLength < DATA_SIZE;
+			expectedBlockNumber++;
+		}
+
+		Files.write(file.toPath(), fileBuffer.toByteArray());
 		System.out.println("WRQ received for: " + file.getAbsolutePath());
 	}
 
