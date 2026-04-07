@@ -52,9 +52,11 @@ public class TFTPRequestHandler implements Runnable
 			transferSocket.connect(clientAddress);
 			transferSocket.setSoTimeout(SOCKET_TIMEOUT_MS);
 
-			int opcode = TFTPPacket.getOpcode(requestData);
-			String filename = TFTPPacket.extractFilename(requestData);
-			String mode = TFTPPacket.extractMode(requestData);
+			StringBuffer requestedFile = new StringBuffer();
+			StringBuffer transferMode = new StringBuffer();
+			int opcode = ParseRQ(requestData, requestedFile, transferMode);
+			String filename = requestedFile.toString();
+			String mode = transferMode.toString();
 
 			System.out.println("Received request from " + clientAddress
 					+ ": " + (opcode == TFTPPacket.OP_RRQ ? "RRQ" : "WRQ")
@@ -85,6 +87,25 @@ public class TFTPRequestHandler implements Runnable
 		{
 			e.printStackTrace();
 		}
+	}
+
+	/**
+	 * Parses the initial RRQ or WRQ packet received from the client.
+	 *
+	 * This method mirrors the role of the original starter-code {@code ParseRQ()}
+	 * method, but it delegates the low-level byte parsing to {@code TFTPPacket}.
+	 *
+	 * @param packetData raw request packet bytes
+	 * @param requestedFile output buffer for the requested filename
+	 * @param transferMode output buffer for the transfer mode
+	 * @return the parsed opcode
+	 */
+	private int ParseRQ(byte[] packetData, StringBuffer requestedFile, StringBuffer transferMode)
+	{
+		int opcode = TFTPPacket.getOpcode(packetData);
+		requestedFile.append(TFTPPacket.extractFilename(packetData));
+		transferMode.append(TFTPPacket.extractMode(packetData));
+		return opcode;
 	}
 
 	/**
