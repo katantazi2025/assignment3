@@ -2,10 +2,11 @@ package assignment3;
 
 import java.io.File;
 import java.io.IOException;
-import java.nio.file.Files;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.InetSocketAddress;
+import java.net.SocketTimeoutException;
+import java.nio.file.Files;
 
 /**
  * Handles one TFTP client request in a separate thread.
@@ -17,6 +18,9 @@ import java.net.InetSocketAddress;
  */
 public class TFTPRequestHandler implements Runnable
 {
+	private static final int DATA_SIZE = TFTPServer.BUFSIZE - 4;
+	private static final int SOCKET_TIMEOUT_MS = 3000;
+
 	private final InetSocketAddress clientAddress;
 	private final byte[] requestData;
 	private final String readDir;
@@ -46,6 +50,7 @@ public class TFTPRequestHandler implements Runnable
 		try (DatagramSocket transferSocket = new DatagramSocket(0))
 		{
 			transferSocket.connect(clientAddress);
+			transferSocket.setSoTimeout(SOCKET_TIMEOUT_MS);
 
 			int opcode = TFTPPacket.getOpcode(requestData);
 			String filename = TFTPPacket.extractFilename(requestData);
@@ -85,9 +90,9 @@ public class TFTPRequestHandler implements Runnable
 	/**
 	 * Handles a read request from the client.
 	 *
-	 * This first implementation validates the file, reads its contents, and sends
-	 * the first DATA block back to the client. ACK handling and multi-block
-	 * transfers can be added next.
+	 * This implementation validates the file, sends it in 512-byte DATA blocks,
+	 * and waits for an ACK after each block before continuing. The transfer ends
+	 * when the final block contains fewer than 512 bytes.
 	 *
 	 * @param socket transfer socket connected to the client
 	 * @param filename name of the file requested by the client
@@ -109,15 +114,32 @@ public class TFTPRequestHandler implements Runnable
 		}
 
 		byte[] fileBytes = Files.readAllBytes(file.toPath());
-		int dataLength = Math.min(fileBytes.length, TFTPServer.BUFSIZE - 4);
-		byte[] firstBlock = new byte[dataLength];
-		System.arraycopy(fileBytes, 0, firstBlock, 0, dataLength);
-
-		byte[] dataPacket = TFTPPacket.createDataPacket(1, firstBlock);
-		DatagramPacket packet = new DatagramPacket(dataPacket, dataPacket.length);
-		socket.send(packet);
-
 		System.out.println("RRQ received for: " + file.getAbsolutePath());
+
+		int blockNumber = 1;
+		int offset = 0;
+
+		do
+		{
+			int bytesRemaining = fileBytes.length - offset;
+			int chunkLength = Math.min(bytesRemaining, DATA_SIZE);
+			byte[] chunk = new byte[chunkLength];
+			System.arraycopy(fileBytes, offset, chunk, 0, chunkLength);
+
+			byte[] dataPacket = TFTPPacket.createDataPacket(blockNumber, chunk);
+			socket.send(new DatagramPacket(dataPacket, dataPacket.length));
+
+			if (!receiveAck(socket, blockNumber))
+			{
+				sendError(socket, TFTPError.ILLEGAL_OPERATION,
+						"Did not receive expected ACK for block " + blockNumber + ".");
+				return;
+			}
+
+			offset += chunkLength;
+			blockNumber++;
+		}
+		while (offset < fileBytes.length);
 	}
 
 	/**
@@ -164,5 +186,32 @@ public class TFTPRequestHandler implements Runnable
 		byte[] errorData = TFTPPacket.createErrorPacket(errorCode, message);
 		DatagramPacket errorPacket = new DatagramPacket(errorData, errorData.length);
 		socket.send(errorPacket);
+	}
+
+	/**
+	 * Waits for an ACK packet that matches the expected block number.
+	 *
+	 * @param socket transfer socket connected to the client
+	 * @param expectedBlockNumber block number that must be acknowledged
+	 * @return {@code true} if the correct ACK is received, otherwise {@code false}
+	 * @throws IOException if receiving the ACK packet fails
+	 */
+	private boolean receiveAck(DatagramSocket socket, int expectedBlockNumber) throws IOException
+	{
+		byte[] ackBuffer = new byte[TFTPServer.BUFSIZE];
+		DatagramPacket ackPacket = new DatagramPacket(ackBuffer, ackBuffer.length);
+
+		try
+		{
+			socket.receive(ackPacket);
+		}
+		catch (SocketTimeoutException e)
+		{
+			return false;
+		}
+
+		int opcode = TFTPPacket.getOpcode(ackPacket.getData());
+		int blockNumber = TFTPPacket.getBlockNumber(ackPacket.getData());
+		return opcode == TFTPPacket.OP_ACK && blockNumber == expectedBlockNumber;
 	}
 }

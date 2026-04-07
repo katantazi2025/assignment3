@@ -41,6 +41,21 @@ public final class TFTPPacket
 	}
 
 	/**
+	 * Extracts the block number from a DATA or ACK packet.
+	 *
+	 * The block number is stored in bytes 2 and 3 of the packet.
+	 *
+	 * @param packetData raw packet bytes
+	 * @return the block number as an unsigned 16-bit integer
+	 */
+	public static int getBlockNumber(byte[] packetData)
+	{
+		ByteBuffer wrap = ByteBuffer.wrap(packetData);
+		wrap.getShort();
+		return wrap.getShort() & 0xFFFF;
+	}
+
+	/**
 	 * Extracts the filename from an RRQ or WRQ packet.
 	 *
 	 * The filename begins after the opcode and ends at the first null byte.
