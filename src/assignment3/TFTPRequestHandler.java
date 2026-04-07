@@ -20,6 +20,7 @@ public class TFTPRequestHandler implements Runnable
 {
 	private static final int DATA_SIZE = TFTPServer.BUFSIZE - 4;
 	private static final int SOCKET_TIMEOUT_MS = 3000;
+	private static final int MAX_RETRIES = 5;
 
 	private final InetSocketAddress clientAddress;
 	private final byte[] requestData;
@@ -112,8 +113,10 @@ public class TFTPRequestHandler implements Runnable
 	 * Handles a read request from the client.
 	 *
 	 * This implementation validates the file, sends it in 512-byte DATA blocks,
-	 * and waits for an ACK after each block before continuing. The transfer ends
-	 * when the final block contains fewer than 512 bytes.
+	 * and waits for an ACK after each block before continuing. If the correct ACK
+	 * does not arrive in time, or if an ACK for the wrong block arrives, the
+	 * server retransmits the previous DATA packet up to a fixed retry limit. The
+	 * transfer ends when the final block contains fewer than 512 bytes.
 	 *
 	 * @param socket transfer socket connected to the client
 	 * @param filename name of the file requested by the client
@@ -148,12 +151,11 @@ public class TFTPRequestHandler implements Runnable
 			System.arraycopy(fileBytes, offset, chunk, 0, chunkLength);
 
 			byte[] dataPacket = TFTPPacket.createDataPacket(blockNumber, chunk);
-			socket.send(new DatagramPacket(dataPacket, dataPacket.length));
-
-			if (!receiveAck(socket, blockNumber))
+			if (!sendDataWithRetry(socket, dataPacket, blockNumber))
 			{
 				sendError(socket, TFTPError.ILLEGAL_OPERATION,
-						"Did not receive expected ACK for block " + blockNumber + ".");
+						"Failed to receive ACK for block " + blockNumber
+								+ " after " + MAX_RETRIES + " retries.");
 				return;
 			}
 
@@ -256,14 +258,42 @@ public class TFTPRequestHandler implements Runnable
 	}
 
 	/**
-	 * Waits for an ACK packet that matches the expected block number.
+	 * Sends a DATA packet and retransmits it until the correct ACK arrives or the
+	 * retry limit is reached.
+	 *
+	 * @param socket transfer socket connected to the client
+	 * @param dataPacket encoded DATA packet to send
+	 * @param expectedBlockNumber block number that must be acknowledged
+	 * @return {@code true} if the correct ACK is eventually received, otherwise
+	 *         {@code false}
+	 * @throws IOException if sending or receiving packets fails
+	 */
+	private boolean sendDataWithRetry(DatagramSocket socket, byte[] dataPacket, int expectedBlockNumber)
+			throws IOException
+	{
+		for (int attempt = 0; attempt < MAX_RETRIES; attempt++)
+		{
+			socket.send(new DatagramPacket(dataPacket, dataPacket.length));
+			AckStatus ackStatus = receiveAck(socket, expectedBlockNumber);
+			if (ackStatus == AckStatus.CORRECT)
+			{
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	/**
+	 * Waits for an ACK packet and checks whether it matches the expected block
+	 * number.
 	 *
 	 * @param socket transfer socket connected to the client
 	 * @param expectedBlockNumber block number that must be acknowledged
 	 * @return {@code true} if the correct ACK is received, otherwise {@code false}
 	 * @throws IOException if receiving the ACK packet fails
 	 */
-	private boolean receiveAck(DatagramSocket socket, int expectedBlockNumber) throws IOException
+	private AckStatus receiveAck(DatagramSocket socket, int expectedBlockNumber) throws IOException
 	{
 		byte[] ackBuffer = new byte[TFTPServer.BUFSIZE];
 		DatagramPacket ackPacket = new DatagramPacket(ackBuffer, ackBuffer.length);
@@ -274,11 +304,26 @@ public class TFTPRequestHandler implements Runnable
 		}
 		catch (SocketTimeoutException e)
 		{
-			return false;
+			return AckStatus.TIMEOUT;
 		}
 
 		int opcode = TFTPPacket.getOpcode(ackPacket.getData());
 		int blockNumber = TFTPPacket.getBlockNumber(ackPacket.getData());
-		return opcode == TFTPPacket.OP_ACK && blockNumber == expectedBlockNumber;
+		if (opcode == TFTPPacket.OP_ACK && blockNumber == expectedBlockNumber)
+		{
+			return AckStatus.CORRECT;
+		}
+
+		return AckStatus.INCORRECT;
+	}
+
+	/**
+	 * Represents the result of waiting for an ACK packet.
+	 */
+	private enum AckStatus
+	{
+		CORRECT,
+		INCORRECT,
+		TIMEOUT
 	}
 }
