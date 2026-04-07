@@ -6,8 +6,6 @@ import java.net.DatagramSocket;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 
-import javax.xml.crypto.Data;
-
 /**
  * Helper class for parsing and creating TFTP packets.
  *
@@ -102,9 +100,11 @@ public final class TFTPPacket
 	 */
 	public static byte[] createDataPacket(int blockNumber, byte[] data)
 	{
-		// Step 11:
-		// Build a TFTP DATA packet.
-		return new byte[0];
+		ByteBuffer buffer = ByteBuffer.allocate(4 + data.length);
+		buffer.putShort((short) OP_DAT);
+		buffer.putShort((short) blockNumber);
+		buffer.put(data);
+		return buffer.array();
 	}
 
 	/**

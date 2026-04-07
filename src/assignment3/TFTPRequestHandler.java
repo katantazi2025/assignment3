@@ -2,10 +2,10 @@ package assignment3;
 
 import java.io.File;
 import java.io.IOException;
+import java.nio.file.Files;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.InetSocketAddress;
-import java.net.SocketException;
 
 /**
  * Handles one TFTP client request in a separate thread.
@@ -85,8 +85,9 @@ public class TFTPRequestHandler implements Runnable
 	/**
 	 * Handles a read request from the client.
 	 *
-	 * At this stage the method only validates the requested file and prints a
-	 * message. The DATA and ACK transfer steps can be added next.
+	 * This first implementation validates the file, reads its contents, and sends
+	 * the first DATA block back to the client. ACK handling and multi-block
+	 * transfers can be added next.
 	 *
 	 * @param socket transfer socket connected to the client
 	 * @param filename name of the file requested by the client
@@ -100,6 +101,21 @@ public class TFTPRequestHandler implements Runnable
 			sendError(socket, TFTPError.FILE_NOT_FOUND, "File not found: " + filename);
 			return;
 		}
+
+		if (file.isDirectory())
+		{
+			sendError(socket, TFTPError.ACCESS_VIOLATION, "Requested path is a directory.");
+			return;
+		}
+
+		byte[] fileBytes = Files.readAllBytes(file.toPath());
+		int dataLength = Math.min(fileBytes.length, TFTPServer.BUFSIZE - 4);
+		byte[] firstBlock = new byte[dataLength];
+		System.arraycopy(fileBytes, 0, firstBlock, 0, dataLength);
+
+		byte[] dataPacket = TFTPPacket.createDataPacket(1, firstBlock);
+		DatagramPacket packet = new DatagramPacket(dataPacket, dataPacket.length);
+		socket.send(packet);
 
 		System.out.println("RRQ received for: " + file.getAbsolutePath());
 	}
