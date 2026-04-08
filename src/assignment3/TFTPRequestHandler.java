@@ -137,7 +137,16 @@ public class TFTPRequestHandler implements Runnable
 			return;
 		}
 
-		byte[] fileBytes = Files.readAllBytes(file.toPath());
+		byte[] fileBytes;
+		try
+		{
+			fileBytes = Files.readAllBytes(file.toPath());
+		}
+		catch (IOException e)
+		{
+			sendError(socket, TFTPError.ACCESS_VIOLATION, "Access violation");
+			return;
+		}
 		System.out.println("RRQ received for: " + file.getAbsolutePath());
 
 		int blockNumber = 1;
@@ -186,10 +195,11 @@ public class TFTPRequestHandler implements Runnable
 			return;
 		}
 
-		if (!FileValidator.isValidForUpload(file.toPath(), 0))
+		FileValidator.ValidationResult initialValidation =
+				FileValidator.validateUpload(file.toPath(), 1);
+		if (!initialValidation.isValid())
 		{
-			sendError(socket, TFTPError.ILLEGAL_OPERATION,
-					"Upload rejected by file validator.");
+			sendError(socket, initialValidation.errorCode(), initialValidation.errorMessage());
 			return;
 		}
 
@@ -217,6 +227,10 @@ public class TFTPRequestHandler implements Runnable
 			}
 
 			int opcode = TFTPPacket.getOpcode(dataPacket.getData());
+			if (opcode == TFTPPacket.OP_ERR)
+			{
+				return;
+			}
 			int blockNumber = TFTPPacket.getBlockNumber(dataPacket.getData());
 			if (opcode != TFTPPacket.OP_DAT || blockNumber != expectedBlockNumber)
 			{
@@ -234,11 +248,27 @@ public class TFTPRequestHandler implements Runnable
 			byte[] ackPacket = TFTPPacket.createAckPacket(blockNumber);
 			socket.send(new DatagramPacket(ackPacket, ackPacket.length));
 
+			FileValidator.ValidationResult validationResult =
+					FileValidator.validateUpload(file.toPath(), fileBuffer.size());
+			if (!validationResult.isValid())
+			{
+				sendError(socket, validationResult.errorCode(), validationResult.errorMessage());
+				return;
+			}
+
 			transferComplete = dataLength < DATA_SIZE;
 			expectedBlockNumber++;
 		}
 
-		Files.write(file.toPath(), fileBuffer.toByteArray());
+		try
+		{
+			Files.write(file.toPath(), fileBuffer.toByteArray());
+		}
+		catch (IOException e)
+		{
+			sendError(socket, TFTPError.ACCESS_VIOLATION, "Access violation");
+			return;
+		}
 		System.out.println("WRQ received for: " + file.getAbsolutePath());
 	}
 
@@ -290,7 +320,7 @@ public class TFTPRequestHandler implements Runnable
 	 *
 	 * @param socket transfer socket connected to the client
 	 * @param expectedBlockNumber block number that must be acknowledged
-	 * @return {@code true} if the correct ACK is received, otherwise {@code false}
+	 * @return the ACK status for the received packet
 	 * @throws IOException if receiving the ACK packet fails
 	 */
 	private AckStatus receiveAck(DatagramSocket socket, int expectedBlockNumber) throws IOException
@@ -308,6 +338,10 @@ public class TFTPRequestHandler implements Runnable
 		}
 
 		int opcode = TFTPPacket.getOpcode(ackPacket.getData());
+		if (opcode == TFTPPacket.OP_ERR)
+		{
+			return AckStatus.ERROR;
+		}
 		int blockNumber = TFTPPacket.getBlockNumber(ackPacket.getData());
 		if (opcode == TFTPPacket.OP_ACK && blockNumber == expectedBlockNumber)
 		{
@@ -324,6 +358,7 @@ public class TFTPRequestHandler implements Runnable
 	{
 		CORRECT,
 		INCORRECT,
-		TIMEOUT
+		TIMEOUT,
+		ERROR
 	}
 }
